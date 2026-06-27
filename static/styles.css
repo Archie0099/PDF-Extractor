@@ -531,6 +531,66 @@ html[data-theme="light"] .theme-toggle .icon-moon { display: block; }
 .btn-remove { color: var(--text-dim); font-size: 18px; line-height: 1; padding: 3px 9px; font-weight: 700; box-shadow: none; border-color: transparent; background: transparent; }
 .btn-remove:hover { color: var(--red); background: var(--red-soft); transform: none; }
 
+/* ---------------- Knowledge graph panel (per file card) ---------------- */
+.kg-panel { margin: 0 18px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-3); overflow: hidden; }
+.kg-summary {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 9px;
+  padding: 12px 14px; font-size: 13px; font-weight: 650; color: var(--text);
+}
+.kg-summary::-webkit-details-marker { display: none; }
+.kg-summary:hover { color: var(--accent); }
+.kg-summary-icon { color: var(--accent); flex: none; }
+.kg-chevron { color: var(--text-faint); margin-left: 2px; transition: transform var(--t); }
+.kg-panel[open] > .kg-summary .kg-chevron { transform: rotate(180deg); }
+.kg-summary-status { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--text-faint); }
+.kg-summary-status.good { color: var(--green); }
+.kg-summary-status.bad { color: var(--red); }
+.kg-summary-status.busy { color: var(--accent); }
+
+.kg-body { padding: 4px 14px 14px; border-top: 1px solid var(--border-soft); }
+.kg-intro { margin: 10px 0 12px; }
+.kg-intro strong { color: var(--accent); }
+.kg-build-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.kg-build-note { margin: 0; flex: 1; min-width: 180px; }
+
+.kg-query-wrap { margin-top: 12px; }
+.kg-ask { display: flex; gap: 8px; }
+.kg-query-input {
+  flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  font: inherit; font-size: 14px; padding: 9px 12px; border-radius: var(--radius-sm);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.kg-query-input::placeholder { color: var(--text-faint); }
+.kg-query-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.kg-results { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.kg-empty { margin: 4px 0; font-size: 12.5px; color: var(--text-faint); }
+.kg-resultmeta { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 700; }
+
+.kg-answer { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: 11px 13px; box-shadow: var(--shadow-sm); }
+.kg-answer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.kg-type-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.kg-entity { font-size: 14px; font-weight: 700; color: var(--text); }
+.kg-type-chip { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid currentColor; border-radius: 999px; padding: 1px 7px; opacity: 0.9; }
+.kg-pages { font-size: 11px; font-weight: 650; color: var(--text-dim); background: var(--surface-3); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+
+.kg-facts { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.kg-triple { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; line-height: 1.5; }
+.kg-subj { font-weight: 650; color: var(--text); }
+.kg-pred { color: var(--accent); font-style: italic; }
+.kg-obj { font-weight: 650; color: var(--text); }
+.kg-arrow { color: var(--text-faint); }
+.kg-triple-page { margin-left: 2px; }
+
+.kg-linkpath { margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 4px; }
+.kg-link-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); font-weight: 700; }
+
+.kg-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.kg-viz-wrap { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: 8px; }
+.kg-canvas { width: 100%; display: block; border-radius: var(--radius-sm); background: var(--surface-3); }
+.kg-viz-note { margin: 8px 2px 2px; text-align: center; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

@@ -17,6 +17,7 @@ Live demo: https://huggingface.co/spaces/Archie0099/PDF-Extractor (hosted on a f
 - Live per-page progress over server-sent events, with cancel and remove.
 - Optional local handwriting OCR using TrOCR. This is offline but slower and less accurate.
 - Optional online OCR using Google Gemini for hard scans and handwriting. It is off by default and needs your own API key, which is stored in the browser and never written to disk by the server.
+- Optional knowledge-graph search over a finished document: it extracts entities and `(subject, predicate, object)` facts, embeds them, and answers plain-English questions with hybrid semantic + graph-traversal retrieval, returning the supporting facts and the source page for each answer, plus a graph view and a JSON export. It is opt-in and uses Gemini (the same key as online OCR); the graph is built with the standard library and numpy, with no extra dependencies.
 - Corrupt PDFs are repaired with pikepdf where possible. Encrypted PDFs are rejected with a clear message.
 
 ## Getting started
@@ -66,6 +67,7 @@ The pipeline is split into focused modules under `pipeline/`:
 - `ocr_engine.py`: the PaddleOCR singleton and warmup.
 - `handwriting.py`: the optional TrOCR engine.
 - `online_ocr.py`: the optional Gemini client, written against the standard library.
+- `kg.py`: the optional knowledge graph: Gemini triple extraction and node embeddings, a pure-Python graph with numpy vectors, and hybrid semantic plus graph-traversal search.
 - `postprocess.py`: header, footer, and page-number stripping with a strict data-safety contract.
 - `analyze.py`: a settings recommender that samples a few pages and suggests options.
 - `export_docx.py`: Word export.

@@ -85,6 +85,16 @@ class Job:
     processed_pages: int = 0
     error: Optional[str] = None
 
+    # Optional knowledge graph (opt-in, online). Built on demand from this job's
+    # extracted pages and attached here, so it is reclaimed with the job by the
+    # TTL/LRU eviction below and — because to_dict() is an explicit allow-list —
+    # is NEVER serialized to the client or broadcast over SSE (same protection
+    # the API key gets). Held loosely as ``object`` to keep jobs.py free of the
+    # kg / numpy import at module load.
+    knowledge_graph: object = field(default=None, repr=False)
+    kg_status: str = field(default="none", repr=False)  # none|building|ready|error
+    kg_error: Optional[str] = field(default=None, repr=False)
+
     # Internals (not serialized). One asyncio.Queue per live SSE subscriber so
     # progress is broadcast (fan-out), not consumed once — reconnects are safe.
     subscribers: list = field(default_factory=list, repr=False)

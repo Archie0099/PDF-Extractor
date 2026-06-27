@@ -301,6 +301,42 @@
         <span class="progress-label" data-role="progressLabel">0 / 0</span>
       </div>
       <div class="file-error" data-role="fileError" hidden></div>
+
+      <details class="kg-panel" data-role="kgPanel" hidden>
+        <summary class="kg-summary">
+          <svg class="kg-summary-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="5" cy="6" r="2.4"></circle><circle cx="19" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle>
+            <line x1="6.9" y1="7.4" x2="10.4" y2="16.2"></line><line x1="17.1" y1="7.4" x2="13.6" y2="16.2"></line><line x1="7" y1="6" x2="17" y2="6"></line>
+          </svg>
+          <span>Knowledge graph &amp; search</span>
+          <span class="kg-summary-status" data-role="kgStatus"></span>
+          <svg class="accordion-chevron kg-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+        </summary>
+        <div class="kg-body">
+          <p class="hint kg-intro">Turn this document into a searchable graph of its entities &amp; facts, then ask questions and get answers traced back to the exact page. Uses <strong>Google Gemini</strong> (online &mdash; same key as Online OCR).</p>
+          <div class="kg-build-row">
+            <button type="button" class="btn btn-primary btn-sm" data-role="kgBuildBtn">Build knowledge graph</button>
+            <span class="kg-build-note hint" data-role="kgBuildNote"></span>
+          </div>
+          <div class="kg-query-wrap" data-role="kgQueryWrap" hidden>
+            <div class="kg-ask">
+              <input type="search" class="kg-query-input" data-role="kgQueryInput" placeholder="Ask about this document…" autocomplete="off" />
+              <button type="button" class="btn btn-primary btn-sm" data-role="kgAskBtn">Ask</button>
+            </div>
+            <div class="kg-results" data-role="kgResults"></div>
+            <div class="kg-tools">
+              <button type="button" class="btn btn-ghost btn-sm" data-role="kgVizToggle">Show graph view</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-role="kgExportBtn">Export graph (.json)</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-role="kgRebuildBtn">Rebuild</button>
+            </div>
+            <div class="kg-viz-wrap" data-role="kgVizWrap" hidden>
+              <canvas class="kg-canvas" data-role="kgCanvas" width="640" height="400"></canvas>
+              <p class="hint kg-viz-note" data-role="kgVizNote"></p>
+            </div>
+          </div>
+        </div>
+      </details>
+
       <div class="pages" data-role="pages"></div>
     </article>
   </template>

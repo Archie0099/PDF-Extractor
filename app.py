@@ -106,6 +106,10 @@ async def capabilities():
         # True when this deployment provides a shared Gemini key (a Space secret),
         # so the front-end can offer online OCR without the visitor's own key.
         "online_demo": bool(os.environ.get("DEMO_GEMINI_KEY", "").strip()),
+        # Knowledge-graph search is always supported by the backend (stdlib +
+        # numpy, no torch/networkx). It needs a Gemini key at build time — the
+        # user's own key or, where present, the demo key (online_demo above).
+        "knowledge_graph": True,
     }
 
 
@@ -348,3 +352,191 @@ async def page_image(job_id: str, n: int, dpi: int = 150):
         # 500 — the frontend <img> onerror handles a non-image response.
         raise HTTPException(status_code=404, detail="could not render page")
     return StreamingResponse(io.BytesIO(png), media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Knowledge graph (opt-in, online) — build a per-document graph from the
+# already-extracted text, then answer queries with hybrid semantic + graph-
+# traversal retrieval. These endpoints touch NO fitz/PaddleOCR, so they run on
+# the DEFAULT thread pool (run_in_executor(None, ...)) — putting them on the
+# single OCR worker would needlessly serialize them behind live extraction.
+# ---------------------------------------------------------------------------
+def _resolve_kg_key(explicit: str, job) -> str:
+    """Pick the Gemini key for KG: explicit (browser) -> the job's own key -> demo."""
+    return (
+        (explicit or "").strip()
+        or (getattr(job, "online_key", "") or "").strip()
+        or os.environ.get("DEMO_GEMINI_KEY", "").strip()
+    )
+
+
+@app.post("/api/graph/build")
+async def graph_build(
+    job_id: str = Form(...),
+    online_key: str = Form(""),
+    online_model: str = Form(""),
+    embed: str = Form("true"),
+    max_pages: str = Form(""),
+):
+    """Build a knowledge graph from a finished job's extracted text."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in ("done", "error"):
+        raise HTTPException(
+            status_code=409,
+            detail="Extraction is still running; wait for it to finish first.",
+        )
+    if job.kg_status == "building":
+        raise HTTPException(
+            status_code=409,
+            detail="A knowledge graph is already being built for this document.",
+        )
+
+    okey = _resolve_kg_key(online_key, job)
+    if not okey:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Building a knowledge graph needs a Gemini API key. Enter your "
+                "free key from aistudio.google.com (the same key online OCR uses)."
+            ),
+        )
+
+    pages = [
+        (p.page, p.text)
+        for p in job.pages
+        if p.status == "done" and (p.text or "").strip()
+    ]
+    if not pages:
+        raise HTTPException(
+            status_code=400, detail="No extracted text to build a graph from."
+        )
+
+    mp = None
+    if (max_pages or "").strip():
+        try:
+            mp = max(0, int(max_pages))
+        except ValueError:
+            mp = None
+    do_embed = _parse_bool(embed)
+
+    from pipeline import kg as kgmod
+
+    job.kg_status = "building"
+    job.kg_error = None
+    loop = asyncio.get_running_loop()
+    try:
+        graph = await loop.run_in_executor(
+            None,
+            lambda: kgmod.build_graph(
+                pages,
+                api_key=okey,
+                triple_model=(online_model or None),
+                max_pages=mp,
+                embed=do_embed,
+            ),
+        )
+        # Set the terminal state INSIDE the try so the finally below sees it.
+        job.knowledge_graph = graph
+        job.kg_status = "ready"
+    except RuntimeError as exc:
+        # A Gemini/key/quota/network failure — actionable, single-line message.
+        job.kg_status = "error"
+        job.kg_error = str(exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        job.kg_status = "error"
+        job.kg_error = "Knowledge-graph build failed unexpectedly."
+        raise HTTPException(
+            status_code=502, detail="Knowledge-graph build failed unexpectedly."
+        )
+    finally:
+        # A client disconnect raises asyncio.CancelledError — a BaseException
+        # that bypasses the except clauses above (they catch only Exception).
+        # Without this, kg_status would stay stuck on "building" and 409-lock
+        # every future rebuild of this document until it's evicted. Reset it.
+        if job.kg_status == "building":
+            job.kg_status = "error"
+            job.kg_error = "Build was interrupted before it finished; try again."
+
+    return {
+        "job_id": job_id,
+        "status": "ready",
+        "nodes": graph.num_nodes,
+        "edges": graph.num_edges,
+        "has_vectors": graph.has_vectors,
+        "pages_built": graph.pages_built,
+        "pages_failed": graph.pages_failed,
+        "embed_error": graph.embed_error,
+    }
+
+
+@app.post("/api/graph/query")
+async def graph_query(
+    job_id: str = Form(...),
+    query: str = Form(...),
+    online_key: str = Form(""),
+    top_k: int = Form(6),
+    hops: int = Form(2),
+):
+    """Answer a query against a built graph: ranked entities + supporting paths."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    graph = job.knowledge_graph
+    if graph is None:
+        raise HTTPException(
+            status_code=409, detail="No knowledge graph has been built for this document yet."
+        )
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Enter a question to search the graph.")
+
+    okey = _resolve_kg_key(online_key, job)  # optional: enables semantic search
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            lambda: graph.search(
+                q,
+                api_key=(okey or None),
+                top_k=max(1, min(20, int(top_k))),
+                hops=max(0, min(3, int(hops))),
+            ),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Graph query failed unexpectedly.")
+    return result
+
+
+@app.get("/api/graph/{job_id}")
+async def graph_get(job_id: str, full: bool = False):
+    """Return the built graph.
+
+    Default: compact node/edge lists for the canvas visualization (capped).
+    ``?full=1``: the complete entities + triples + provenance for .json export.
+    """
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    graph = job.knowledge_graph
+    if graph is None:
+        return {
+            "status": job.kg_status,
+            "error": job.kg_error,
+            "nodes": [],
+            "edges": [],
+            "total_nodes": 0,
+            "total_edges": 0,
+            "truncated": False,
+        }
+    if full:
+        data = graph.to_export_dict()
+        data["status"] = "ready"
+        return data
+    data = graph.to_viz_dict()
+    data["status"] = "ready"
+    return data
