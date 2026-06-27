@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local PDF Extractor</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="logo">
+          <rect x="5" y="3" width="18" height="26" rx="3" fill="currentColor" opacity="0.15"></rect>
+          <rect x="5" y="3" width="18" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect>
+          <line x1="9" y1="11" x2="19" y2="11" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+          <line x1="9" y1="16" x2="19" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+          <line x1="9" y1="21" x2="15" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>Local PDF Extractor</h1>
+        <p class="tagline">Extract text from typed, scanned &amp; handwritten PDFs</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Sidebar: settings + drop zone -->
+    <aside class="sidebar">
+      <section class="panel">
+        <h2 class="panel-title">Settings</h2>
+
+        <div class="setting">
+          <label class="setting-label">Accuracy</label>
+          <div class="segmented" id="modeToggle" role="radiogroup" aria-label="Accuracy">
+            <button type="button" class="seg active" data-mode="max" role="radio" aria-checked="true">Max accuracy</button>
+            <button type="button" class="seg" data-mode="fast" role="radio" aria-checked="false">Faster</button>
+          </div>
+          <p class="hint" id="modeHint">Max accuracy is slower but renders at higher DPI and uses angle correction.</p>
+        </div>
+
+        <div class="setting">
+          <label class="setting-label" for="langSelect">Language</label>
+          <select id="langSelect" class="select">
+            <option value="en" selected>English</option>
+            <option value="hi">Hindi (Devanagari)</option>
+          </select>
+        </div>
+
+        <div class="setting-group-label">Image &amp; pages</div>
+
+        <div class="setting setting-row">
+          <div>
+            <label class="setting-label" for="preprocessToggle">Preprocessing</label>
+            <p class="hint">Deskew, contrast-boost &amp; denoise before OCR. Best left on.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="preprocessToggle" checked />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="setting setting-row">
+          <div>
+            <label class="setting-label" for="binarizeToggle">Binarize</label>
+            <p class="hint">Force black-and-white. Helps some clean/high-contrast scans; usually leave off (grayscale is more accurate on most documents).</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="binarizeToggle" />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="setting setting-row">
+          <div>
+            <label class="setting-label" for="forceOcrToggle">Force OCR</label>
+            <p class="hint">Re-read every page as an image, even pages that already have selectable text. Use only when the embedded text is wrong/garbled, or text is trapped inside images. Slower; off by default.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="forceOcrToggle" />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="setting setting-row">
+          <div>
+            <label class="setting-label" for="removeHeadersToggle">Remove headers &amp; footers</label>
+            <p class="hint">Strip repeating page headers, footers &amp; page numbers from multi-page documents (3+ pages). On by default; turn off to keep every line exactly as on the page.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="removeHeadersToggle" checked />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="setting-group-label">OCR engine</div>
+
+        <div class="setting setting-row">
+          <div>
+            <label class="setting-label" for="handwritingToggle">Handwriting (local) <span class="beta-tag">beta</span></label>
+            <p class="hint">Read handwritten pages with a local model (English, ~73% on real cursive). Much slower; first use downloads a model once. For far better handwriting, use Online Gemini below instead &mdash; you don't need both.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="handwritingToggle" />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="setting setting-row">
+          <div>
+            <label class="setting-label" for="onlineToggle">Online vision OCR (Gemini)</label>
+            <p class="hint">Far higher accuracy on handwriting &amp; hard scans, via Google Gemini.
+               <strong>Sends your page images to Google</strong> &mdash; off by default. Needs a free API key.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="onlineToggle" />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="setting setting-sub" id="onlineRow" hidden>
+          <label class="setting-label" for="onlineKey">Gemini API key</label>
+          <input type="password" id="onlineKey" class="select online-input" placeholder="paste key from aistudio.google.com" autocomplete="off" spellcheck="false" />
+          <div class="online-key-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="onlineCheck">Check key</button>
+            <span class="online-status" id="onlineStatus" data-role="onlineStatus"></span>
+          </div>
+          <label class="setting-label" for="onlineModel" style="margin-top:8px;">Model</label>
+          <select id="onlineModel" class="select"></select>
+          <p class="hint">Your key is stored only in this browser and sent with each upload &mdash; never saved on the server.
+             Pages with a real text layer are still read locally (not sent).</p>
+        </div>
+
+        <div class="setting-group-label">Tools</div>
+
+        <div class="setting">
+          <button type="button" class="btn btn-ghost" id="suggestBtn">Suggest best settings</button>
+          <p class="hint">Samples 1&ndash;2 pages of the next file you pick and recommends settings.
+             Opt-in &middot; can take up to a minute on the CPU &middot; nothing is applied until you click Apply.</p>
+          <input type="file" id="suggestInput" accept="application/pdf,.pdf" hidden />
+        </div>
+        <div class="setting" id="suggestResult" hidden>
+          <div class="suggest-card">
+            <p class="suggest-rationale" data-role="suggestRationale"></p>
+            <div class="suggest-evidence" data-role="suggestEvidence"></div>
+            <button type="button" class="btn btn-primary btn-sm" id="suggestApply">Apply recommended</button>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="dropzone"
+        id="dropzone"
+        tabindex="0"
+        role="button"
+        aria-label="Drop PDF files here or click to browse">
+        <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true" class="dz-icon">
+          <path d="M12 16V4m0 0l-4 4m4-4l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        <p class="dz-primary">Drop PDF files here</p>
+        <p class="dz-secondary">or <span class="dz-link">browse</span> &middot; multiple files supported</p>
+        <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden />
+      </section>
+
+      <section class="notes" aria-label="Honesty notes">
+        <h3 class="notes-title">Good to know</h3>
+        <ul>
+          <li>Typed / born-digital pages are extracted instantly and exactly &mdash; no OCR.</li>
+          <li>OCR accuracy depends on scan quality; handwriting is the hardest.</li>
+          <li>For the best handwriting, use Online Gemini; everything else runs on your machine.</li>
+          <li>The first local-OCR run downloads model weights once, then caches them.</li>
+        </ul>
+      </section>
+    </aside>
+
+    <!-- Main work area -->
+    <section class="work">
+      <div class="toolbar" id="toolbar" hidden>
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class="search-icon">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+            <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+          </svg>
+          <input type="search" id="searchInput" class="search-input" placeholder="Search across all extracted text…" autocomplete="off" />
+          <span class="search-count" id="searchCount" hidden></span>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" class="btn btn-ghost" id="copyAllBtn">Copy all</button>
+          <div class="export-group">
+            <button type="button" class="btn btn-ghost" data-export="txt">.txt</button>
+            <button type="button" class="btn btn-ghost" data-export="md">.md</button>
+            <button type="button" class="btn btn-ghost" data-export="docx">.docx</button>
+            <button type="button" class="btn btn-ghost" data-export="json">.json</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty-state" id="emptyState">
+        <svg viewBox="0 0 64 64" width="72" height="72" aria-hidden="true">
+          <rect x="14" y="8" width="36" height="48" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"></rect>
+          <line x1="22" y1="22" x2="42" y2="22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
+          <line x1="22" y1="30" x2="42" y2="30" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
+          <line x1="22" y1="38" x2="34" y2="38" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
+        </svg>
+        <h2>No documents yet</h2>
+        <p>Drop one or more PDFs to extract their text.</p>
+      </div>
+
+      <div id="filesContainer" class="files-container"></div>
+    </section>
+  </main>
+
+  <!-- Templates -->
+  <template id="fileCardTemplate">
+    <article class="file-card">
+      <div class="file-head">
+        <div class="file-meta">
+          <span class="status-dot" data-role="statusDot"></span>
+          <h3 class="file-name" data-role="fileName"></h3>
+        </div>
+        <div class="file-head-right">
+          <span class="status-text" data-role="statusText">Pending</span>
+          <button type="button" class="btn btn-danger btn-sm" data-role="cancelBtn">Cancel</button>
+          <button type="button" class="btn btn-ghost btn-sm btn-remove" data-role="removeBtn" title="Remove this file" aria-label="Remove this file">&times;</button>
+        </div>
+      </div>
+      <div class="progress-row">
+        <div class="progress-track"><div class="progress-fill" data-role="progressFill"></div></div>
+        <span class="progress-label" data-role="progressLabel">0 / 0</span>
+      </div>
+      <div class="file-error" data-role="fileError" hidden></div>
+      <div class="pages" data-role="pages"></div>
+    </article>
+  </template>
+
+  <template id="pageCardTemplate">
+    <div class="page-card" data-role="pageCard">
+      <div class="page-head">
+        <span class="page-num" data-role="pageNum"></span>
+        <span class="badge" data-role="badge"></span>
+        <span class="to-check" data-role="toCheck" hidden></span>
+        <span class="page-spacer"></span>
+        <button type="button" class="btn btn-ghost btn-sm" data-role="toggleImg">Show original page</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-role="editBtn">Edit</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-role="copyPage">Copy</button>
+      </div>
+      <pre class="page-text" data-role="pageText"></pre>
+      <textarea class="page-edit" data-role="pageEdit" spellcheck="false" hidden></textarea>
+      <div class="page-image-wrap" data-role="imageWrap" hidden></div>
+    </div>
+  </template>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# OPTIONAL — only needed for the "Handwriting" mode (local TrOCR model).
+# Heavy (~hundreds of MB) and slow on CPU. The core app does NOT need these.
+#
+# Install (from the activated project venv) with the CPU torch build:
+#   pip install -r requirements-handwriting.txt --extra-index-url https://download.pytorch.org/whl/cpu
+#
+# torch is pinned to a Windows-stable CPU build (newer wheels had a DLL-load bug
+# on Windows). The first time you run handwriting mode, the TrOCR model
+# (microsoft/trocr-base-handwritten, a few hundred MB) downloads once, then works offline.
+
+# These two versions are matched: newer transformers wants a newer torch, but
+# newer torch CPU wheels had a DLL-load bug on Windows — this pair is stable.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2
+transformers==4.40.2

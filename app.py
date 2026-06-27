@@ -1,0 +1,308 @@
+"""PDF text extraction app — FastAPI backend.
+
+Run locally with:
+    uvicorn app:app --reload
+(serves on http://127.0.0.1:8000)
+
+Local and CPU-only by default. An online OCR path (Google Gemini) is optional
+and off unless you supply your own API key.
+"""
+
+import io
+import json
+import asyncio
+from pathlib import Path
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from pipeline.jobs import manager
+from pipeline.ocr_engine import engine
+from pipeline.export_docx import build_docx
+from pipeline.analyze import suggest_settings
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
+
+app = FastAPI(title="Local PDF Text Extractor")
+
+# Serve static assets (CSS/JS) locally — no external CDN/network dependency.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Hold strong references to fire-and-forget background tasks: asyncio keeps only
+# a weak reference to a Task, so a bare create_task() result can in principle be
+# GC'd mid-flight ("Task was destroyed but it is pending"). Keeping them here and
+# discarding on completion makes the lifetime explicit.
+_BG_TASKS: set = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
+def _parse_bool(value: str) -> bool:
+    """Parse a form string into a bool. true/1/yes (case-insensitive) -> True."""
+    return str(value).strip().lower() in ("true", "1", "yes")
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    # Preload the English PaddleOCR model at startup so the first request is fast
+    # (first ever run still downloads model weights from disk cache). This is
+    # best-effort: a failed/slow first-run download must NEVER abort startup —
+    # text-layer extraction and the online Gemini path don't need PaddleOCR at
+    # all. Run it in the OCR worker thread so a slow download can't block the
+    # event loop, and swallow any error (OCR lazy-loads on first real use).
+    from pipeline.jobs import _EXECUTOR
+
+    async def _safe_warmup() -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(_EXECUTOR, engine.warmup, "en")
+        except Exception:
+            pass
+
+    _spawn(_safe_warmup())
+
+
+@app.get("/")
+async def index():
+    """Serve the single-page front-end."""
+    return FileResponse(str(INDEX_HTML))
+
+
+@app.post("/api/upload")
+async def upload(
+    file: UploadFile = File(...),
+    mode: str = Form("max"),
+    lang: str = Form("en"),
+    preprocess: str = Form("true"),
+    binarize: str = Form("false"),
+    handwriting: str = Form("false"),
+    online: str = Form("false"),
+    online_key: str = Form(""),
+    online_model: str = Form(""),
+    force_ocr: str = Form("false"),
+    remove_headers: str = Form("true"),
+):
+    """Accept a PDF upload, create a job, and kick off background processing."""
+    pre = _parse_bool(preprocess)
+    binar = _parse_bool(binarize)
+    handw = _parse_bool(handwriting)
+    onl = _parse_bool(online)
+    okey = (online_key or "").strip()
+    omodel = (online_model or "").strip()
+    force = _parse_bool(force_ocr)
+    rm_headers = _parse_bool(remove_headers)
+
+    # Cheap validations BEFORE buffering the whole upload into memory, so a
+    # request that will be rejected anyway doesn't pay a full file read.
+    if onl and not okey:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Online OCR needs a Gemini API key. Enter your free key from "
+                "aistudio.google.com, or turn Online OCR off."
+            ),
+        )
+
+    if handw:
+        from pipeline.handwriting import is_available
+        if not is_available():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Handwriting mode needs extra packages. In the project venv "
+                    "run: pip install transformers torch  (first use also "
+                    "downloads the TrOCR model, a few hundred MB)."
+                ),
+            )
+
+    pdf_bytes = await file.read()
+
+    # create_job opens the PDF with PyMuPDF to validate + count pages. Run it on
+    # the single OCR worker thread so ALL fitz access stays on one thread —
+    # PyMuPDF is not thread-safe even across separate Documents, and the event
+    # loop could otherwise call fitz.open here concurrently with another job's
+    # render on the worker thread (multi-file uploads run concurrently).
+    from pipeline.jobs import _EXECUTOR
+    loop = asyncio.get_running_loop()
+    try:
+        job = await loop.run_in_executor(
+            _EXECUTOR,
+            lambda: manager.create_job(
+                file.filename or "document.pdf",
+                pdf_bytes,
+                mode=mode,
+                lang=lang,
+                preprocess=pre,
+                binarize=binar,
+                handwriting=handw,
+                online=onl,
+                online_key=okey,
+                online_model=omodel,
+                force_ocr=force,
+                remove_headers=rm_headers,
+            ),
+        )
+    except ValueError as exc:
+        # encrypted / corrupt / otherwise unreadable PDF
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Launch processing as a background task; progress is streamed over SSE.
+    _spawn(manager.run(job))
+
+    return {
+        "job_id": job.job_id,
+        "filename": job.filename,
+        "total_pages": job.total_pages,
+        "status": job.status,
+    }
+
+
+@app.post("/api/online/validate")
+async def online_validate(api_key: str = Form(...)):
+    """Validate a Gemini API key and return the vision models it can use.
+
+    Lets the UI confirm the key works (and populate the model dropdown) before
+    the user runs a whole document. Never stores the key server-side.
+    """
+    from pipeline import online_ocr
+
+    def _check():
+        all_models = online_ocr.list_models(api_key)
+        supported = [m for m in online_ocr.SUPPORTED_MODELS if m in set(all_models)]
+        return {
+            "ok": True,
+            "supported": supported,
+            "recommended": online_ocr.best_available_model(all_models),
+        }
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(None, _check)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:  # never surface a bare 500 from a key check
+        raise HTTPException(
+            status_code=502, detail="Online key check failed unexpectedly."
+        )
+
+
+@app.post("/api/analyze")
+async def analyze(
+    file: UploadFile = File(...),
+    lang: str = Form("en"),
+):
+    """Sample 1-2 pages and recommend the best settings for THIS document.
+
+    Opt-in and fast. Runs the CPU-bound sweep in the OCR worker thread pool so
+    it never stalls the event loop / SSE streams, and so it never runs OCR
+    concurrently with a live extraction job (PaddleOCR is not thread-safe).
+    """
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="empty file")
+    from pipeline.jobs import _EXECUTOR
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        _EXECUTOR, lambda: suggest_settings(pdf_bytes, lang=lang)
+    )
+    return result
+
+
+@app.post("/api/export/docx")
+async def export_docx(payload: dict = Body(...)):
+    """Build a .docx from the posted extracted documents and stream it back."""
+    documents = payload.get("documents", []) if isinstance(payload, dict) else []
+    loop = asyncio.get_running_loop()
+    # build_docx is hardened to never raise on a malformed/hostile payload, but
+    # keep a belt-and-suspenders guard so a single bad export can't 500.
+    try:
+        data = await loop.run_in_executor(None, build_docx, documents)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not build the Word document.")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        headers={"Content-Disposition": 'attachment; filename="extraction.docx"'},
+    )
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job(job_id: str):
+    """Return the current full state of a job."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job.to_dict()
+
+
+@app.get("/api/jobs/{job_id}/stream")
+async def stream_job(job_id: str):
+    """Stream per-page progress events as Server-Sent Events."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    async def event_generator():
+        async for event in manager.events(job_id):
+            yield f"data: {json.dumps(event)}\n\n"
+            etype = event.get("type")
+            if etype in ("done", "error", "cancelled"):
+                break
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Request cancellation of a running job."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    manager.cancel(job_id)
+    return {"status": "cancelling"}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Remove a job and free its in-memory PDF bytes. Idempotent (always 200)."""
+    manager.delete(job_id)
+    return {"status": "deleted"}
+
+
+@app.get("/api/jobs/{job_id}/pages/{n}/image")
+async def page_image(job_id: str, n: int, dpi: int = 150):
+    """Render a 1-based page to PNG and stream it back."""
+    job = manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    # Clamp DPI to a sane range so a degenerate ?dpi= (0, negative, or huge)
+    # can't crash the renderer (fitz error / giant allocation) into a 500.
+    dpi = max(36, min(600, dpi))
+    try:
+        # PNG raster + encode is CPU-bound; run it off the event loop. Use the
+        # SAME single-worker OCR executor so PyMuPDF rendering never runs
+        # concurrently with an OCR page render or another image render (fitz is
+        # not formally thread-safe even across separate Document objects).
+        from pipeline.jobs import _EXECUTOR
+        loop = asyncio.get_running_loop()
+        png = await loop.run_in_executor(
+            _EXECUTOR, manager.render_page_png, job_id, n, dpi
+        )
+    except (KeyError, IndexError, ValueError):
+        raise HTTPException(status_code=404, detail="page not found")
+    except Exception:
+        # A PyMuPDF render error (e.g. a page with a malformed embedded image
+        # raises fitz.FileDataError / RuntimeError) must not surface as a bare
+        # 500 — the frontend <img> onerror handles a non-image response.
+        raise HTTPException(status_code=404, detail="could not render page")
+    return StreamingResponse(io.BytesIO(png), media_type="image/png")
