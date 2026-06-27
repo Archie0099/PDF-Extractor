@@ -10,6 +10,7 @@ and off unless you supply your own API key.
 
 import io
 import json
+import os
 import asyncio
 from pathlib import Path
 
@@ -75,6 +76,39 @@ async def index():
     return FileResponse(str(INDEX_HTML))
 
 
+# Cache the (deterministic) optional-feature probe so torch/transformers are
+# imported at most once.
+_CAPABILITIES: dict = {}
+
+
+@app.get("/api/capabilities")
+async def capabilities():
+    """Report which optional features are usable in THIS deployment.
+
+    Local handwriting (TrOCR) needs torch + transformers, which the lean hosted
+    build omits. The front-end reads this to disable the handwriting toggle
+    gracefully and point users to online OCR, instead of letting a page fail
+    mid-extraction with a missing-dependency error.
+    """
+    if "handwriting" not in _CAPABILITIES:
+        from pipeline.jobs import _EXECUTOR
+        from pipeline.handwriting import is_available
+
+        loop = asyncio.get_running_loop()
+        try:
+            _CAPABILITIES["handwriting"] = await loop.run_in_executor(
+                _EXECUTOR, is_available
+            )
+        except Exception:
+            _CAPABILITIES["handwriting"] = False
+    return {
+        "handwriting": bool(_CAPABILITIES["handwriting"]),
+        # True when this deployment provides a shared Gemini key (a Space secret),
+        # so the front-end can offer online OCR without the visitor's own key.
+        "online_demo": bool(os.environ.get("DEMO_GEMINI_KEY", "").strip()),
+    }
+
+
 @app.post("/api/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -101,6 +135,14 @@ async def upload(
 
     # Cheap validations BEFORE buffering the whole upload into memory, so a
     # request that will be rejected anyway doesn't pay a full file read.
+    #
+    # A deployment may provide a shared demo key via the DEMO_GEMINI_KEY env var
+    # (set as a Space secret, never committed to the repo). Fall back to it when
+    # the visitor turns on online OCR without supplying their own key, so the
+    # hosted demo works out of the box. The user's own key always takes
+    # precedence; this only fills in a blank.
+    if onl and not okey:
+        okey = os.environ.get("DEMO_GEMINI_KEY", "").strip()
     if onl and not okey:
         raise HTTPException(
             status_code=400,

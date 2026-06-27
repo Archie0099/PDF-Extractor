@@ -237,7 +237,7 @@
       showToast("Analysis failed (network).");
     } finally {
       suggestBtn.disabled = false;
-      suggestBtn.textContent = "Suggest best settings";
+      suggestBtn.textContent = "Auto-detect best settings";
     }
   }
 

@@ -4,6 +4,52 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Local PDF Extractor</title>
+  <script>
+    /* Set the theme before first paint (no flash), then wire the header toggle.
+       Self-contained so app.js is untouched. */
+    (function () {
+      var root = document.documentElement;
+      try {
+        var t = localStorage.getItem("theme");
+        if (t !== "light" && t !== "dark") t = "light";
+        root.setAttribute("data-theme", t);
+      } catch (e) {
+        root.setAttribute("data-theme", "light");
+      }
+      document.addEventListener("DOMContentLoaded", function () {
+        var btn = document.getElementById("themeToggle");
+        if (btn) {
+          btn.addEventListener("click", function () {
+            var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+            root.setAttribute("data-theme", next);
+            try { localStorage.setItem("theme", next); } catch (e) {}
+          });
+        }
+
+        /* Disable local-handwriting gracefully where its packages aren't
+           installed (e.g. the lean hosted build) and point users to Gemini,
+           instead of letting a page fail mid-extraction. */
+        fetch("/api/capabilities")
+          .then(function (r) { return r.json(); })
+          .then(function (caps) {
+            if (!caps) return;
+            if (caps.handwriting === false) {
+              var hw = document.getElementById("handwritingToggle");
+              if (hw) { hw.checked = false; hw.disabled = true; }
+              var row = document.getElementById("handwritingRow");
+              if (row) row.classList.add("is-unavailable");
+              var note = document.getElementById("hwUnavailable");
+              if (note) note.hidden = false;
+            }
+            if (caps.online_demo === true) {
+              var on = document.getElementById("onlineDemoNote");
+              if (on) on.hidden = false;
+            }
+          })
+          .catch(function () {});
+      });
+    })();
+  </script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -23,10 +69,21 @@
         <p class="tagline">Extract text from typed, scanned &amp; handwritten PDFs</p>
       </div>
     </div>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch light / dark theme" title="Switch light / dark theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <main class="layout">
-    <!-- Sidebar: settings + drop zone -->
+    <!-- Sidebar: settings only -->
     <aside class="sidebar">
       <section class="panel">
         <h2 class="panel-title">Settings</h2>
@@ -48,133 +105,106 @@
           </select>
         </div>
 
-        <div class="setting-group-label">Image &amp; pages</div>
+        <details class="accordion">
+          <summary class="accordion-summary">
+            <span>Advanced preprocessing</span>
+            <svg class="accordion-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          </summary>
+          <div class="accordion-body">
+            <div class="setting setting-row">
+              <div>
+                <label class="setting-label" for="preprocessToggle">Preprocessing</label>
+                <p class="hint">Deskew, contrast-boost &amp; denoise before OCR. Best left on.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="preprocessToggle" checked />
+                <span class="slider" aria-hidden="true"></span>
+              </label>
+            </div>
 
-        <div class="setting setting-row">
-          <div>
-            <label class="setting-label" for="preprocessToggle">Preprocessing</label>
-            <p class="hint">Deskew, contrast-boost &amp; denoise before OCR. Best left on.</p>
+            <div class="setting setting-row">
+              <div>
+                <label class="setting-label" for="binarizeToggle">Binarize</label>
+                <p class="hint">Force black-and-white. Helps some clean/high-contrast scans; usually leave off (grayscale is more accurate on most documents).</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="binarizeToggle" />
+                <span class="slider" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="setting setting-row">
+              <div>
+                <label class="setting-label" for="forceOcrToggle">Force OCR</label>
+                <p class="hint">Re-read every page as an image, even pages that already have selectable text. Use only when the embedded text is wrong/garbled, or text is trapped inside images. Slower; off by default.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="forceOcrToggle" />
+                <span class="slider" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="setting setting-row">
+              <div>
+                <label class="setting-label" for="removeHeadersToggle">Remove headers &amp; footers</label>
+                <p class="hint">Strip repeating page headers, footers &amp; page numbers from multi-page documents (3+ pages). On by default; turn off to keep every line exactly as on the page.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="removeHeadersToggle" checked />
+                <span class="slider" aria-hidden="true"></span>
+              </label>
+            </div>
           </div>
-          <label class="switch">
-            <input type="checkbox" id="preprocessToggle" checked />
-            <span class="slider" aria-hidden="true"></span>
-          </label>
-        </div>
+        </details>
 
-        <div class="setting setting-row">
-          <div>
-            <label class="setting-label" for="binarizeToggle">Binarize</label>
-            <p class="hint">Force black-and-white. Helps some clean/high-contrast scans; usually leave off (grayscale is more accurate on most documents).</p>
+        <details class="accordion">
+          <summary class="accordion-summary">
+            <span>Handwriting &amp; online OCR</span>
+            <svg class="accordion-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          </summary>
+          <div class="accordion-body">
+            <div class="setting setting-row" id="handwritingRow">
+              <div>
+                <label class="setting-label" for="handwritingToggle">Handwriting (local) <span class="beta-tag">beta</span></label>
+                <p class="hint">Read handwritten pages with a local model (English, ~73% on real cursive). Much slower; first use downloads a model once. For far better handwriting, use Online Gemini below instead &mdash; you don't need both.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="handwritingToggle" />
+                <span class="slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <p class="hint hw-note" id="hwUnavailable" hidden>Local handwriting isn't installed in this build &mdash; use <strong>Online vision OCR (Gemini)</strong> below for handwriting.</p>
+
+            <div class="setting setting-row">
+              <div>
+                <label class="setting-label" for="onlineToggle">Online vision OCR (Gemini)</label>
+                <p class="hint">Far higher accuracy on handwriting &amp; hard scans, via Google Gemini.
+                   <strong>Sends your page images to Google</strong> &mdash; off by default. Needs a free API key.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="onlineToggle" />
+                <span class="slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <p class="hint hw-note" id="onlineDemoNote" hidden>This demo includes a Gemini key &mdash; just turn this on and leave the key field blank. Or paste your own key to use that instead.</p>
+            <div class="setting setting-sub" id="onlineRow" hidden>
+              <label class="setting-label" for="onlineKey">Gemini API key</label>
+              <input type="password" id="onlineKey" class="select online-input" placeholder="paste key from aistudio.google.com" autocomplete="off" spellcheck="false" />
+              <div class="online-key-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="onlineCheck">Check key</button>
+                <span class="online-status" id="onlineStatus" data-role="onlineStatus"></span>
+              </div>
+              <label class="setting-label" for="onlineModel" style="margin-top:8px;">Model</label>
+              <select id="onlineModel" class="select"></select>
+              <p class="hint">Your key is stored only in this browser and sent with each upload &mdash; never saved on the server.
+                 Pages with a real text layer are still read locally (not sent).</p>
+            </div>
           </div>
-          <label class="switch">
-            <input type="checkbox" id="binarizeToggle" />
-            <span class="slider" aria-hidden="true"></span>
-          </label>
-        </div>
-
-        <div class="setting setting-row">
-          <div>
-            <label class="setting-label" for="forceOcrToggle">Force OCR</label>
-            <p class="hint">Re-read every page as an image, even pages that already have selectable text. Use only when the embedded text is wrong/garbled, or text is trapped inside images. Slower; off by default.</p>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="forceOcrToggle" />
-            <span class="slider" aria-hidden="true"></span>
-          </label>
-        </div>
-
-        <div class="setting setting-row">
-          <div>
-            <label class="setting-label" for="removeHeadersToggle">Remove headers &amp; footers</label>
-            <p class="hint">Strip repeating page headers, footers &amp; page numbers from multi-page documents (3+ pages). On by default; turn off to keep every line exactly as on the page.</p>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="removeHeadersToggle" checked />
-            <span class="slider" aria-hidden="true"></span>
-          </label>
-        </div>
-
-        <div class="setting-group-label">OCR engine</div>
-
-        <div class="setting setting-row">
-          <div>
-            <label class="setting-label" for="handwritingToggle">Handwriting (local) <span class="beta-tag">beta</span></label>
-            <p class="hint">Read handwritten pages with a local model (English, ~73% on real cursive). Much slower; first use downloads a model once. For far better handwriting, use Online Gemini below instead &mdash; you don't need both.</p>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="handwritingToggle" />
-            <span class="slider" aria-hidden="true"></span>
-          </label>
-        </div>
-
-        <div class="setting setting-row">
-          <div>
-            <label class="setting-label" for="onlineToggle">Online vision OCR (Gemini)</label>
-            <p class="hint">Far higher accuracy on handwriting &amp; hard scans, via Google Gemini.
-               <strong>Sends your page images to Google</strong> &mdash; off by default. Needs a free API key.</p>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="onlineToggle" />
-            <span class="slider" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="setting setting-sub" id="onlineRow" hidden>
-          <label class="setting-label" for="onlineKey">Gemini API key</label>
-          <input type="password" id="onlineKey" class="select online-input" placeholder="paste key from aistudio.google.com" autocomplete="off" spellcheck="false" />
-          <div class="online-key-actions">
-            <button type="button" class="btn btn-ghost btn-sm" id="onlineCheck">Check key</button>
-            <span class="online-status" id="onlineStatus" data-role="onlineStatus"></span>
-          </div>
-          <label class="setting-label" for="onlineModel" style="margin-top:8px;">Model</label>
-          <select id="onlineModel" class="select"></select>
-          <p class="hint">Your key is stored only in this browser and sent with each upload &mdash; never saved on the server.
-             Pages with a real text layer are still read locally (not sent).</p>
-        </div>
-
-        <div class="setting-group-label">Tools</div>
-
-        <div class="setting">
-          <button type="button" class="btn btn-ghost" id="suggestBtn">Suggest best settings</button>
-          <p class="hint">Samples 1&ndash;2 pages of the next file you pick and recommends settings.
-             Opt-in &middot; can take up to a minute on the CPU &middot; nothing is applied until you click Apply.</p>
-          <input type="file" id="suggestInput" accept="application/pdf,.pdf" hidden />
-        </div>
-        <div class="setting" id="suggestResult" hidden>
-          <div class="suggest-card">
-            <p class="suggest-rationale" data-role="suggestRationale"></p>
-            <div class="suggest-evidence" data-role="suggestEvidence"></div>
-            <button type="button" class="btn btn-primary btn-sm" id="suggestApply">Apply recommended</button>
-          </div>
-        </div>
-      </section>
-
-      <section
-        class="dropzone"
-        id="dropzone"
-        tabindex="0"
-        role="button"
-        aria-label="Drop PDF files here or click to browse">
-        <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true" class="dz-icon">
-          <path d="M12 16V4m0 0l-4 4m4-4l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-        </svg>
-        <p class="dz-primary">Drop PDF files here</p>
-        <p class="dz-secondary">or <span class="dz-link">browse</span> &middot; multiple files supported</p>
-        <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden />
-      </section>
-
-      <section class="notes" aria-label="Honesty notes">
-        <h3 class="notes-title">Good to know</h3>
-        <ul>
-          <li>Typed / born-digital pages are extracted instantly and exactly &mdash; no OCR.</li>
-          <li>OCR accuracy depends on scan quality; handwriting is the hardest.</li>
-          <li>For the best handwriting, use Online Gemini; everything else runs on your machine.</li>
-          <li>The first local-OCR run downloads model weights once, then caches them.</li>
-        </ul>
+        </details>
       </section>
     </aside>
 
-    <!-- Main work area -->
+    <!-- Main work area: dropzone becomes the results pane after upload -->
     <section class="work">
       <div class="toolbar" id="toolbar" hidden>
         <div class="search-wrap">
@@ -186,6 +216,7 @@
           <span class="search-count" id="searchCount" hidden></span>
         </div>
         <div class="toolbar-actions">
+          <label for="fileInput" class="btn btn-ghost add-more" title="Add more PDFs">+ Add PDF</label>
           <button type="button" class="btn btn-ghost" id="copyAllBtn">Copy all</button>
           <div class="export-group">
             <button type="button" class="btn btn-ghost" data-export="txt">.txt</button>
@@ -196,20 +227,60 @@
         </div>
       </div>
 
+      <!-- Empty state == the single central dropzone + auto-detect -->
       <div class="empty-state" id="emptyState">
-        <svg viewBox="0 0 64 64" width="72" height="72" aria-hidden="true">
-          <rect x="14" y="8" width="36" height="48" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"></rect>
-          <line x1="22" y1="22" x2="42" y2="22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
-          <line x1="22" y1="30" x2="42" y2="30" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
-          <line x1="22" y1="38" x2="34" y2="38" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
-        </svg>
-        <h2>No documents yet</h2>
-        <p>Drop one or more PDFs to extract their text.</p>
+        <section
+          class="dropzone"
+          id="dropzone"
+          tabindex="0"
+          role="button"
+          aria-label="Drop PDF files here or click to browse">
+          <div class="dz-icon-wrap">
+            <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true" class="dz-icon">
+              <path d="M12 16V4m0 0l-4 4m4-4l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+              <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </div>
+          <p class="dz-primary">Drop your PDF here</p>
+          <p class="dz-secondary">or <span class="dz-link">browse files</span> &middot; multiple files supported</p>
+        </section>
+
+        <div class="dz-extra">
+          <button type="button" class="btn btn-ghost" id="suggestBtn">Auto-detect best settings</button>
+          <p class="hint dz-extra-hint">Samples 1&ndash;2 pages of a file and recommends settings &middot; can take up to a minute on the CPU &middot; nothing is applied until you click Apply.</p>
+          <div class="setting" id="suggestResult" hidden>
+            <div class="suggest-card">
+              <p class="suggest-rationale" data-role="suggestRationale"></p>
+              <div class="suggest-evidence" data-role="suggestEvidence"></div>
+              <button type="button" class="btn btn-primary btn-sm" id="suggestApply">Apply recommended</button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <!-- File pickers live here (always present, hidden) so the dropzone and the
+           toolbar "Add PDF" label can both trigger them regardless of view state. -->
+      <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden />
+      <input type="file" id="suggestInput" accept="application/pdf,.pdf" hidden />
 
       <div id="filesContainer" class="files-container"></div>
     </section>
   </main>
+
+  <footer class="app-footer">
+    <details class="footer-tips">
+      <summary>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+        Good to know
+      </summary>
+      <ul class="footer-tips-list">
+        <li>Typed / born-digital pages are extracted instantly and exactly &mdash; no OCR.</li>
+        <li>OCR accuracy depends on scan quality; handwriting is the hardest.</li>
+        <li>For the best handwriting, use Online Gemini; everything else runs on your machine.</li>
+        <li>The first local-OCR run downloads model weights once, then caches them.</li>
+      </ul>
+    </details>
+  </footer>
 
   <!-- Templates -->
   <template id="fileCardTemplate">

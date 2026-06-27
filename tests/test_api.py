@@ -24,6 +24,29 @@ def test_startup_survives_warmup_failure(monkeypatch):
         assert c.get("/").status_code == 200
 
 
+def test_capabilities_reports_handwriting_bool(client):
+    """The front-end gates the local-handwriting toggle on this; it must always
+    return a well-formed {"handwriting": <bool>} so a build without torch/
+    transformers disables the toggle instead of failing mid-extraction."""
+    r = client.get("/api/capabilities")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, dict) and isinstance(body.get("handwriting"), bool)
+
+
+def test_capabilities_online_demo_reflects_env(client, monkeypatch):
+    """online_demo must mirror whether a shared demo key (DEMO_GEMINI_KEY) is
+    configured, so the front-end only offers keyless online OCR when the server
+    can actually supply a key. The key value itself is never exposed."""
+    monkeypatch.delenv("DEMO_GEMINI_KEY", raising=False)
+    assert client.get("/api/capabilities").json().get("online_demo") is False
+    monkeypatch.setenv("DEMO_GEMINI_KEY", "sk-demo-not-real")
+    body = client.get("/api/capabilities").json()
+    assert body.get("online_demo") is True
+    # the endpoint never leaks the key value
+    assert "sk-demo-not-real" not in str(body)
+
+
 def test_docx_endpoint_never_500s_on_hostile_body(client):
     hostile_bodies = [
         {"documents": "notalist"},
